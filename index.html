@@ -1,8 +1,669 @@
 <!DOCTYPE html>
-<html>
-<head><meta charset="UTF-8"><title>ft_onion</title></head>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tor circuit simulator</title>
+  <style>
+    :root {
+      --bg: #f4f1f8;
+      --surface: #ffffff;
+      --ink: #1f1a2e;
+      --muted: #6b6480;
+      --line: #d9d2e6;
+      --purple: #7d4698;
+      --guard: #1f9d8b;
+      --middle: #d98e1f;
+      --exit: #d1495b;
+      --site: #6b6480;
+      --move: 1000ms;
+    }
+
+    * {
+      box-sizing: border-box
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif
+    }
+
+    main {
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 36px 20px 56px
+    }
+
+    h1 {
+      font-size: clamp(26px, 4.5vw, 40px);
+      line-height: 1.1;
+      margin: 0 0 10px;
+      letter-spacing: -.02em
+    }
+
+    .lede {
+      color: var(--muted);
+      margin: 0 0 28px;
+      max-width: 60ch
+    }
+
+    .app {
+      display: grid;
+      grid-template-columns: minmax(0, 340px) minmax(0, 1fr);
+      gap: 24px;
+      align-items: start
+    }
+
+    @media (max-width:780px) {
+      .app {
+        grid-template-columns: 1fr
+      }
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 20px
+    }
+
+    .stack {
+      display: grid;
+      gap: 16px
+    }
+
+    /* circuit */
+    .nodes {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      gap: 52px
+    }
+
+    .nodes::before {
+      content: "";
+      position: absolute;
+      left: 27px;
+      top: 28px;
+      bottom: 28px;
+      width: 2px;
+      background: var(--line)
+    }
+
+    .node {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      background: none;
+      border: 0;
+      padding: 4px;
+      margin: -4px;
+      border-radius: 12px;
+      text-align: left;
+      font: inherit;
+      color: inherit;
+      cursor: pointer
+    }
+
+    .node:focus-visible,
+    button:focus-visible,
+    input:focus-visible {
+      outline: 3px solid var(--purple);
+      outline-offset: 2px
+    }
+
+    .icon {
+      width: 56px;
+      height: 56px;
+      flex: none;
+      border-radius: 50%;
+      border: 4px solid var(--c);
+      background: var(--surface);
+      display: grid;
+      place-items: center;
+      font-weight: 700;
+      font-size: 15px;
+      transition: background .2s
+    }
+
+    .node[aria-pressed="true"] .icon {
+      background: color-mix(in srgb, var(--c) 16%, white)
+    }
+
+    .node[aria-pressed="true"] .name {
+      text-decoration: underline;
+      text-decoration-thickness: 2px;
+      text-underline-offset: 4px;
+      text-decoration-color: var(--c)
+    }
+
+    .name {
+      font-weight: 650;
+      display: block
+    }
+
+    .ip {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 14px;
+      display: block
+    }
+
+    .role {
+      font-size: 13px;
+      color: var(--muted);
+      display: block
+    }
+
+    .flash .icon {
+      animation: flash .9s ease
+    }
+
+    @keyframes flash {
+      0% {
+        transform: scale(1)
+      }
+
+      35% {
+        transform: scale(1.18)
+      }
+
+      100% {
+        transform: scale(1)
+      }
+    }
+
+    /* packet */
+    .packet {
+      position: absolute;
+      left: 4px;
+      top: 0;
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      background: var(--surface);
+      z-index: 2;
+      transition: top var(--move) ease-in-out, opacity .3s;
+      pointer-events: none
+    }
+
+    .packet.idle {
+      opacity: 0
+    }
+
+    .ring {
+      position: absolute;
+      border-radius: 50%;
+      border: 4px solid;
+      transition: opacity .35s, transform .35s
+    }
+
+    .r3 {
+      inset: 0;
+      border-color: var(--guard)
+    }
+
+    .r2 {
+      inset: 8px;
+      border-color: var(--middle)
+    }
+
+    .r1 {
+      inset: 16px;
+      border-color: var(--exit)
+    }
+
+    .core {
+      position: absolute;
+      inset: 20px;
+      border-radius: 50%;
+      background: var(--ink);
+      transition: inset .3s, background .3s
+    }
+
+    .packet[data-layers="2"] .r3,
+    .packet[data-layers="1"] .r3,
+    .packet[data-layers="1"] .r2,
+    .packet[data-layers="0"] .r3,
+    .packet[data-layers="0"] .r2,
+    .packet[data-layers="0"] .r1 {
+      opacity: 0;
+      transform: scale(1.7)
+    }
+
+    .packet[data-layers="0"][data-https="0"] .core {
+      inset: 14px;
+      background: var(--purple)
+    }
+
+    .packet[data-layers="0"][data-https="1"] .core {
+      inset: 14px;
+      background: transparent;
+      border: 3px solid var(--ink)
+    }
+
+    .badge {
+      position: absolute;
+      top: -8px;
+      right: -8px;
+      min-width: 20px;
+      height: 20px;
+      padding: 0 5px;
+      border-radius: 10px;
+      background: var(--ink);
+      color: #fff;
+      font-size: 12px;
+      font-weight: 700;
+      display: grid;
+      place-items: center
+    }
+
+    .packet[data-layers="0"] .badge {
+      display: none
+    }
+
+    .meta {
+      margin: 22px 0 0;
+      padding-top: 14px;
+      border-top: 1px solid var(--line);
+      font-size: 14px;
+      color: var(--muted)
+    }
+
+    /* controls */
+    label.field {
+      display: block;
+      font-weight: 600;
+      margin-bottom: 6px
+    }
+
+    input[type="text"] {
+      width: 100%;
+      font: inherit;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--bg);
+      color: var(--ink)
+    }
+
+    .check {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      margin: 14px 0 18px;
+      font-size: 15px
+    }
+
+    .check input {
+      width: 18px;
+      height: 18px;
+      accent-color: var(--purple)
+    }
+
+    .buttons {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px
+    }
+
+    button.btn {
+      font: inherit;
+      font-weight: 650;
+      padding: 11px 18px;
+      border-radius: 10px;
+      border: 2px solid var(--purple);
+      cursor: pointer
+    }
+
+    .btn.primary {
+      background: var(--purple);
+      color: #fff
+    }
+
+    .btn.secondary {
+      background: transparent;
+      color: var(--purple)
+    }
+
+    .btn:disabled {
+      opacity: .5;
+      cursor: not-allowed
+    }
+
+    /* info */
+    .info h2,
+    .log h2 {
+      font-size: 17px;
+      margin: 0 0 4px
+    }
+
+    .info .sub {
+      color: var(--muted);
+      font-size: 14px;
+      margin: 0 0 12px
+    }
+
+    .cols {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px
+    }
+
+    @media (max-width:520px) {
+      .cols {
+        grid-template-columns: 1fr
+      }
+    }
+
+    .cols h3 {
+      font-size: 14px;
+      margin: 0 0 6px
+    }
+
+    .cols ul {
+      margin: 0;
+      padding-left: 18px;
+      font-size: 15px
+    }
+
+    .cols li {
+      margin-bottom: 4px
+    }
+
+    .state {
+      margin: 14px 0 0;
+      padding: 10px 12px;
+      border-radius: 10px;
+      background: var(--bg);
+      font-size: 15px
+    }
+
+    .log ol {
+      margin: 10px 0 0;
+      padding: 0;
+      list-style: none;
+      display: grid;
+      gap: 10px
+    }
+
+    .log li {
+      padding-left: 16px;
+      position: relative;
+      font-size: 15px
+    }
+
+    .log li::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: .55em;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--c, var(--ink))
+    }
+
+    .log .empty {
+      color: var(--muted);
+      font-size: 15px;
+      margin: 10px 0 0
+    }
+
+    @media (prefers-reduced-motion:reduce) {
+      .flash .icon {
+        animation: none
+      }
+    }
+  </style>
+</head>
+
 <body>
-  <h1>Welcome to my hidden service 🧅</h1>
-  <p>You are reading this through Tor.</p>
+  <main>
+    <h1>How a Tor circuit works</h1>
+    <p class="lede">Send a message and watch it cross three relays. Each relay removes one layer of encryption, and none
+      of them sees the whole picture.</p>
+
+    <div class="app">
+      <section class="card" aria-label="Tor circuit">
+        <div class="nodes" id="nodes">
+          <div class="packet idle" id="packet" data-layers="3" data-https="1" aria-hidden="true">
+            <div class="ring r3"></div>
+            <div class="ring r2"></div>
+            <div class="ring r1"></div>
+            <div class="core"></div>
+            <div class="badge" id="badge">3</div>
+          </div>
+        </div>
+        <p class="meta" id="meta"></p>
+      </section>
+
+      <div class="stack">
+        <section class="card">
+          <label class="field" for="msg">Your message</label>
+          <input type="text" id="msg" value="Hello, example.com" maxlength="60" autocomplete="off">
+          <label class="check"><input type="checkbox" id="https" checked> The website uses HTTPS</label>
+          <div class="buttons">
+            <button class="btn primary" id="send">Send message</button>
+            <button class="btn secondary" id="newc">New circuit</button>
+            <button class="btn secondary" id="pause" disabled>Pause</button>
+          </div>
+        </section>
+
+        <section class="card info" aria-live="polite">
+          <h2 id="infoTitle"></h2>
+          <p class="sub">Click any point on the circuit to see what it knows.</p>
+          <div class="cols">
+            <div>
+              <h3>Knows</h3>
+              <ul id="knows"></ul>
+            </div>
+            <div>
+              <h3>Cannot see</h3>
+              <ul id="hidden"></ul>
+            </div>
+          </div>
+          <p class="state" id="state"></p>
+        </section>
+
+        <section class="card log" aria-live="polite">
+          <h2>Step by step</h2>
+          <p class="empty" id="empty">Press "Send message" to start.</p>
+          <ol id="log"></ol>
+        </section>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    const $ = s => document.querySelector(s);
+    const rnd = (a, b) => Math.floor(Math.random() * (b - a + 1)) + a;
+    const fakeIp = () => `${rnd(11, 223)}.${rnd(1, 254)}.${rnd(1, 254)}.${rnd(1, 254)}`;
+    const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const MOVE = reduce ? 200 : 1000;
+    document.documentElement.style.setProperty('--move', MOVE + 'ms');
+    const wait = ms => new Promise(r => setTimeout(r, reduce ? Math.min(ms, 200) : ms));
+
+    const NODES = [
+      { id: 'you', glyph: 'You', name: 'You', role: 'Your computer', color: 'var(--purple)' },
+      { id: 'guard', glyph: '1', name: 'Entry guard', role: 'Fixed for weeks', color: 'var(--guard)' },
+      { id: 'middle', glyph: '2', name: 'Middle relay', role: 'Changes on a new circuit', color: 'var(--middle)' },
+      { id: 'exit', glyph: '3', name: 'Exit relay', role: 'Changes on a new circuit', color: 'var(--exit)' },
+      { id: 'site', glyph: 'Web', name: 'Website', role: 'The destination', color: 'var(--site)' }
+    ];
+    const ADDR = { you: '203.0.113.7', guard: fakeIp(), middle: fakeIp(), exit: fakeIp(), site: 'example.com' };
+    let circuits = 1, busy = false, current = 'you', selected = 'you';
+    let paused = false, resume = null;
+
+    const nodesEl = $('#nodes'), packet = $('#packet');
+
+    // build the nodes
+    NODES.forEach(n => {
+      const b = document.createElement('button');
+      b.className = 'node';
+      b.id = 'n-' + n.id;
+      b.style.setProperty('--c', n.color);
+      b.innerHTML = `<span class="icon">${n.glyph}</span>
+    <span><span class="name">${n.name}</span><span class="ip" id="ip-${n.id}"></span><span class="role">${n.role}</span></span>`;
+      b.addEventListener('click', () => select(n.id));
+      nodesEl.appendChild(b);
+    });
+
+    function render() {
+      NODES.forEach(n => { $('#ip-' + n.id).textContent = ADDR[n.id]; });
+      $('#meta').textContent = `Circuits built: ${circuits}. Entry guard changes: 0. Only the middle and exit change.`;
+    }
+
+    function knowledge(id) {
+      const https = $('#https').checked;
+      return {
+        you: { k: ['Your real IP', 'The message', 'The whole path'], h: [] },
+        guard: { k: ['Your real IP', 'The middle relay'], h: ['The website', 'The message'] },
+        middle: { k: ['The guard', 'The exit'], h: ['Your IP', 'The website', 'The message'] },
+        exit: {
+          k: https ? ['The website', 'The middle relay'] : ['The website', 'The message (plain HTTP)', 'The middle relay'],
+          h: https ? ['Your IP', 'The guard', 'The message (HTTPS)'] : ['Your IP', 'The guard']
+        },
+        site: { k: ['The exit relay\u2019s IP', 'The message'], h: ['Your IP', 'Any relay before the exit'] }
+      }[id];
+    }
+
+    function fill(ul, items) {
+      ul.innerHTML = '';
+      (items.length ? items : ['Nothing hidden']).forEach(t => {
+        const li = document.createElement('li'); li.textContent = t; ul.appendChild(li);
+      });
+    }
+
+    function select(id) {
+      selected = id;
+      document.querySelectorAll('.node').forEach(b => b.setAttribute('aria-pressed', b.id === 'n-' + id));
+      const n = NODES.find(x => x.id === id), k = knowledge(id);
+      $('#infoTitle').textContent = `${n.name} (${ADDR[id]})`;
+      fill($('#knows'), k.k);
+      fill($('#hidden'), k.h);
+    }
+
+    function setState(layers) {
+      const https = $('#https').checked;
+      packet.dataset.layers = layers;
+      $('#badge').textContent = layers;
+      $('#state').textContent = [
+        layers === 3 ? 'The message has 3 layers of encryption. Nobody on the way can read it.' : '',
+        layers === 2 ? '2 layers left.' : '',
+        layers === 1 ? '1 layer left.' : '',
+        layers === 0 ? (https ? 'No Tor layers left, but HTTPS still hides the message.' : 'No layers left. The exit can read the message.') : ''
+      ].find(Boolean);
+    }
+
+    function centerY(id) {
+      const ic = $(`#n-${id} .icon`).getBoundingClientRect();
+      return ic.top + ic.height / 2 - nodesEl.getBoundingClientRect().top;
+    }
+    function place(id) { packet.style.top = (centerY(id) - 24) + 'px'; }
+
+    function addLog(id, text) {
+      $('#empty').hidden = true;
+      const li = document.createElement('li');
+      li.style.setProperty('--c', NODES.find(n => n.id === id).color);
+      li.textContent = text;
+      $('#log').appendChild(li);
+    }
+
+    // Stops the animation once the packet has reached a node, until Resume is pressed
+    async function checkpoint(layers) {
+      if (!paused) return;
+      $('#state').textContent = 'Paused. Press Resume to continue.';
+      while (paused) await new Promise(r => { resume = r; });
+      setState(layers);
+    }
+
+    function togglePause() {
+      if (!busy) return;
+      paused = !paused;
+      $('#pause').textContent = paused ? 'Resume' : 'Pause';
+      if (!paused && resume) { resume(); resume = null; }
+    }
+
+    function setBusy(v) {
+      busy = v;
+      $('#send').disabled = v; $('#newc').disabled = v;
+      $('#pause').disabled = !v;
+      if (!v) { paused = false; $('#pause').textContent = 'Pause'; }
+      $('#send').textContent = v ? 'Sending\u2026' : 'Send message';
+    }
+
+    async function send() {
+      if (busy) return;
+      setBusy(true);
+      $('#log').innerHTML = '';
+      const https = $('#https').checked;
+      const msg = $('#msg').value.trim() || '(empty message)';
+
+      // reset packet to "you" without animating the move
+      packet.style.transition = 'none';
+      place('you'); packet.offsetHeight;
+      packet.style.transition = '';
+      packet.dataset.https = https ? '1' : '0';
+      packet.classList.remove('idle');
+      current = 'you';
+      setState(3); select('you');
+      addLog('you', 'You wrap the message in 3 layers, one for each relay.');
+      await wait(900);
+      await checkpoint(3);
+
+      const steps = [
+        ['guard', 2, `The guard sees your IP and removes layer 1. It cannot tell what the message says or where it is going.`],
+        ['middle', 1, `The middle relay removes layer 2. It only knows the guard before it and the exit after it.`],
+        ['exit', 0, https
+          ? `The exit removes layer 3 and sees the destination, but HTTPS still hides the message. It does not know who you are.`
+          : `The exit removes layer 3 and reads "${msg}" and the destination. It does not know who you are.`],
+        ['site', 0, `The website receives the message from the exit relay (${ADDR.exit}), not from you.`]
+      ];
+
+      for (const [id, layers, text] of steps) {
+        place(id); current = id;
+        await wait(MOVE + 100);
+        select(id); setState(layers);
+        addLog(id, text);
+        await wait(900);
+        await checkpoint(layers);
+      }
+      setBusy(false);
+    }
+
+    async function newCircuit() {
+      if (busy) return;
+      circuits++;
+      ADDR.middle = fakeIp(); ADDR.exit = fakeIp();
+      packet.classList.add('idle');
+      render();
+      select(selected);
+      ['middle', 'exit'].forEach(id => {
+        const el = $('#n-' + id);
+        el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash');
+      });
+      $('#log').innerHTML = '';
+      addLog('you', 'New circuit built. The middle and exit relays changed. The entry guard stayed the same.');
+      $('#state').textContent = 'Press "Send message" to use the new circuit.';
+    }
+
+    $('#send').addEventListener('click', send);
+    $('#newc').addEventListener('click', newCircuit);
+    $('#pause').addEventListener('click', togglePause);
+    $('#https').addEventListener('change', () => select(selected));
+    window.addEventListener('resize', () => place(current));
+
+    render();
+    select('you');
+    setState(3);
+    $('#state').textContent = 'Press "Send message" to start.';
+    place('you');
+  </script>
 </body>
+
 </html>
