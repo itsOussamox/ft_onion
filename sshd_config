@@ -1,0 +1,7 @@
+Port 4242
+PermitRootLogin no
+PasswordAuthentication yes
+PubkeyAuthentication yes
+UsePAM yes
+X11Forwarding no
+Subsystem sftp /usr/lib/openssh/sftp-server
